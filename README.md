@@ -55,6 +55,8 @@ Echo consists of three Compact smart contracts, a TypeScript DApp layer, and a N
   Salary:       d9f77776ebfdb541ad65fb84193632ed34955df89bd5661195e25d8fe773ec37
   Review:       c4443230ef95961056c3daa2870ecf3d66eb0b8182798435c8724b962fe84666
 
+---
+
 ## Architecture
 
 ```
