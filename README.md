@@ -6,6 +6,11 @@ Echo is a privacy-first platform that enables employees to share compensation da
 
 ---
 
+<img width="1461" height="820" alt="Screenshot 2026-02-08 at 6 06 18 PM" src="https://github.com/user-attachments/assets/ee9115ef-62db-4784-aa17-4c7f771001eb" />
+
+
+---
+
 ## Table of Contents
 
 - [Overview](#overview)
