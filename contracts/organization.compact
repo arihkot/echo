@@ -1,0 +1,237 @@
+// Echo Organization Registry Contract
+// Manages organization identity, employee onboarding/offboarding,
+// and role-based access control using Midnight's ZK primitives.
+
+pragma language_version 0.20.0;
+
+import CompactStandardLibrary;
+
+// ============================================================
+// TYPES
+// ============================================================
+
+enum Role {
+  ADMIN,
+  HR,
+  EMPLOYEE,
+  AUDITOR
+}
+
+enum OrgStatus {
+  ACTIVE,
+  SUSPENDED,
+  DEACTIVATED
+}
+
+// ============================================================
+// LEDGER STATE (Public on-chain)
+// ============================================================
+
+// Organization identity - the admin's public key hash
+export ledger orgAdmin: Bytes<32>;
+
+// Organization metadata commitment (name, industry, size -- all private)
+export ledger orgMetadataCommitment: Bytes<32>;
+
+// Organization status
+export ledger status: OrgStatus;
+
+// Employee commitment tree -- stores hashed employee credentials
+// Proves membership without revealing which employee
+// Depth 16 supports up to 65,536 employees per org
+export ledger employees: HistoricMerkleTree<16, Bytes<32>>;
+
+// HR operator commitments -- authorized HR personnel
+export ledger hrOperators: HistoricMerkleTree<10, Bytes<32>>;
+
+// Auditor commitments -- authorized auditors with viewing access
+export ledger auditors: HistoricMerkleTree<8, Bytes<32>>;
+
+// Revocation set -- nullifiers for offboarded employees
+export ledger revokedEmployees: Set<Bytes<32>>;
+
+// Counters
+export ledger employeeCount: Counter;
+export ledger round: Counter;
+
+// ============================================================
+// WITNESSES (Private data from user's local machine)
+// ============================================================
+
+witness adminSecretKey(): Bytes<32>;
+witness hrSecretKey(): Bytes<32>;
+witness employeeSecretKey(): Bytes<32>;
+witness orgMetadata(): Bytes<32>;
+witness metadataRandomness(): Bytes<32>;
+
+// Merkle path witnesses for proving membership
+witness findEmployeePath(pk: Bytes<32>): MerkleTreePath<16, Bytes<32>>;
+witness findHrPath(pk: Bytes<32>): MerkleTreePath<10, Bytes<32>>;
+witness findAuditorPath(pk: Bytes<32>): MerkleTreePath<8, Bytes<32>>;
+
+// ============================================================
+// INTERNAL CIRCUITS
+// ============================================================
+
+// Derive a public key from a secret key with domain separation
+circuit adminPublicKey(r: Field, sk: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>(
+    [pad(32, "echo:org:admin:pk"), r as Bytes<32>, sk]
+  );
+}
+
+circuit hrPublicKey(r: Field, sk: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>(
+    [pad(32, "echo:org:hr:pk"), r as Bytes<32>, sk]
+  );
+}
+
+circuit employeePublicKey(r: Field, sk: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>(
+    [pad(32, "echo:org:emp:pk"), r as Bytes<32>, sk]
+  );
+}
+
+// Derive a nullifier for revocation (different domain than public key)
+circuit employeeNullifier(sk: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>(
+    [pad(32, "echo:org:emp:nul"), sk]
+  );
+}
+
+circuit auditorPublicKey(r: Field, sk: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>(
+    [pad(32, "echo:org:aud:pk"), r as Bytes<32>, sk]
+  );
+}
+
+// ============================================================
+// EXPORTED CIRCUITS (Entry points)
+// ============================================================
+
+// Initialize the organization contract
+constructor(sk: Bytes<32>, metadata: Bytes<32>, metaRand: Bytes<32>) {
+  orgAdmin = disclose(adminPublicKey(round, sk));
+  orgMetadataCommitment = disclose(persistentCommit<Bytes<32>>(metadata, metaRand));
+  status = OrgStatus.ACTIVE;
+}
+
+// --- Admin Operations ---
+
+// Register an HR operator (admin only)
+export circuit addHrOperator(hrPk: Bytes<32>): [] {
+  assert(status == OrgStatus.ACTIVE, "Organization is not active");
+  const sk = adminSecretKey();
+  const pk = adminPublicKey(round, sk);
+  assert(orgAdmin == pk, "Not authorized: admin only");
+  hrOperators.insert(disclose(hrPk));
+}
+
+// Register an auditor (admin only)
+export circuit addAuditor(auditorPk: Bytes<32>): [] {
+  assert(status == OrgStatus.ACTIVE, "Organization is not active");
+  const sk = adminSecretKey();
+  const pk = adminPublicKey(round, sk);
+  assert(orgAdmin == pk, "Not authorized: admin only");
+  auditors.insert(disclose(auditorPk));
+}
+
+// Suspend the organization (admin only)
+export circuit suspendOrg(): [] {
+  const sk = adminSecretKey();
+  const pk = adminPublicKey(round, sk);
+  assert(orgAdmin == pk, "Not authorized: admin only");
+  status = OrgStatus.SUSPENDED;
+}
+
+// Reactivate the organization (admin only)
+export circuit reactivateOrg(): [] {
+  const sk = adminSecretKey();
+  const pk = adminPublicKey(round, sk);
+  assert(orgAdmin == pk, "Not authorized: admin only");
+  assert(status == OrgStatus.SUSPENDED, "Organization is not suspended");
+  status = OrgStatus.ACTIVE;
+}
+
+// Rotate admin key (admin only) -- advances the round for unlinkability
+export circuit rotateAdminKey(): [] {
+  const sk = adminSecretKey();
+  const pk = adminPublicKey(round, sk);
+  assert(orgAdmin == pk, "Not authorized: admin only");
+  round.increment(1);
+  orgAdmin = disclose(adminPublicKey(round, sk));
+}
+
+// --- HR Operations ---
+
+// Onboard an employee (HR only, proves HR membership via MerkleTree)
+export circuit onboardEmployee(empCommitment: Bytes<32>): [] {
+  assert(status == OrgStatus.ACTIVE, "Organization is not active");
+
+  // Prove HR membership without revealing which HR operator
+  const sk = hrSecretKey();
+  const pk = hrPublicKey(round, sk);
+  const hrPath = findHrPath(pk);
+  assert(
+    hrOperators.checkRoot(disclose(merkleTreePathRoot<10, Bytes<32>>(hrPath))),
+    "Not authorized: HR operator not found"
+  );
+
+  // Add employee commitment to the tree
+  employees.insert(disclose(empCommitment));
+  employeeCount.increment(1);
+}
+
+// Offboard an employee by adding their nullifier to the revocation set
+// The nullifier is derived from the employee's secret, so only someone
+// who knows the employee's credential can generate it
+export circuit offboardEmployee(empNullifier: Bytes<32>): [] {
+  assert(status == OrgStatus.ACTIVE, "Organization is not active");
+
+  // Prove HR membership
+  const sk = hrSecretKey();
+  const pk = hrPublicKey(round, sk);
+  const hrPath = findHrPath(pk);
+  assert(
+    hrOperators.checkRoot(disclose(merkleTreePathRoot<10, Bytes<32>>(hrPath))),
+    "Not authorized: HR operator not found"
+  );
+
+  // Add to revocation set
+  assert(!revokedEmployees.member(disclose(empNullifier)), "Employee already offboarded");
+  revokedEmployees.insert(disclose(empNullifier));
+}
+
+// --- Employee Operations ---
+
+// Prove active employment without revealing identity
+// Returns nothing but the ZK proof itself serves as attestation
+export circuit proveEmployment(): [] {
+  assert(status == OrgStatus.ACTIVE, "Organization is not active");
+
+  const sk = employeeSecretKey();
+  const pk = employeePublicKey(round, sk);
+  const empPath = findEmployeePath(pk);
+
+  // Prove membership in employee tree
+  assert(
+    employees.checkRoot(disclose(merkleTreePathRoot<16, Bytes<32>>(empPath))),
+    "Not a registered employee"
+  );
+
+  // Prove not revoked
+  const nul = employeeNullifier(sk);
+  assert(!revokedEmployees.member(disclose(nul)), "Employment has been revoked");
+}
+
+// --- Query Operations ---
+
+// Get organization status
+export circuit getStatus(): OrgStatus {
+  return status;
+}
+
+// Get employee count
+export circuit getEmployeeCount(): Field {
+  return disclose(employeeCount as Field);
+}

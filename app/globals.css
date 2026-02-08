@@ -1,0 +1,129 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@layer base {
+  * {
+    @apply border-echo-border;
+  }
+
+  body {
+    @apply bg-echo-bg text-white antialiased;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-echo-bg;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-echo-border rounded-full;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-echo-muted;
+  }
+}
+
+@layer components {
+  .glass-panel {
+    @apply bg-echo-surface/80 backdrop-blur-xl border border-echo-border rounded-xl;
+  }
+
+  .glass-panel-hover {
+    @apply glass-panel transition-all duration-200 hover:border-echo-accent/30 hover:bg-echo-surface;
+  }
+
+  .accent-glow {
+    box-shadow: 0 0 20px rgba(99, 102, 241, 0.15), 0 0 60px rgba(99, 102, 241, 0.05);
+  }
+
+  .text-gradient {
+    @apply bg-gradient-to-r from-echo-accent to-midnight-400 bg-clip-text text-transparent;
+  }
+
+  .stat-card {
+    @apply glass-panel p-6 flex flex-col gap-2;
+  }
+
+  .input-field {
+    @apply w-full bg-echo-bg border border-echo-border rounded-lg px-4 py-2.5 text-white
+           placeholder:text-echo-muted/60 focus:outline-none focus:ring-2 focus:ring-echo-accent/40
+           focus:border-echo-accent/40 transition-all duration-200;
+  }
+
+  .label-text {
+    @apply text-sm font-medium text-echo-muted mb-1.5 block;
+  }
+
+  .section-heading {
+    @apply text-lg font-semibold text-white;
+  }
+
+  .page-heading {
+    @apply text-2xl font-bold text-white;
+  }
+
+  .rating-bar {
+    @apply h-2 rounded-full bg-echo-bg overflow-hidden;
+  }
+
+  .rating-bar-fill {
+    @apply h-full rounded-full bg-gradient-to-r from-echo-accent to-midnight-400 transition-all duration-500;
+  }
+}
+
+@layer utilities {
+  .animate-fade-in {
+    animation: fadeIn 0.3s ease-out;
+  }
+
+  .animate-slide-up {
+    animation: slideUp 0.3s ease-out;
+  }
+
+  .animate-pulse-slow {
+    animation: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
+  .animate-toast-in {
+    animation: toastIn 0.3s ease-out;
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes toastIn {
+  from {
+    opacity: 0;
+    transform: translateX(16px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}

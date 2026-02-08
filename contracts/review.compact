@@ -1,0 +1,241 @@
+// Echo Anonymous Review Contract
+// Enables verified employees to submit anonymous workplace reviews.
+// Uses commitment/nullifier pattern to prevent double-reviewing
+// while ensuring only actual employees can submit reviews.
+
+pragma language_version 0.20.0;
+
+import CompactStandardLibrary;
+
+// ============================================================
+// TYPES
+// ============================================================
+
+enum ReviewCategory {
+  WORK_CULTURE,
+  COMPENSATION,
+  MANAGEMENT,
+  WORK_LIFE_BALANCE,
+  CAREER_GROWTH,
+  DIVERSITY_INCLUSION,
+  GENERAL
+}
+
+// ============================================================
+// LEDGER STATE (Public on-chain)
+// ============================================================
+
+// Link to the organization (verified by admin key)
+export ledger orgAdmin: Bytes<32>;
+
+// The review token tree root reference -- mirrors the salary contract's review tokens
+// In practice, this would reference the salary contract's tree
+// For simplicity, we maintain a copy that the admin syncs
+export ledger verifiedEmployeeTokens: HistoricMerkleTree<20, Bytes<32>>;
+
+// Review nullifiers -- prevents double-reviewing per period
+export ledger reviewNullifiers: Set<Bytes<32>>;
+
+// Review content hashes (IPFS/Arweave CID hashes stored on-chain)
+// The content itself lives off-chain; on-chain we store the hash
+// plus a commitment proving a verified employee authored it
+export ledger reviewHashes: HistoricMerkleTree<20, Bytes<32>>;
+
+// Rating aggregates (1-5 scale, stored as counters)
+// Culture ratings
+export ledger cultureRating1: Counter;
+export ledger cultureRating2: Counter;
+export ledger cultureRating3: Counter;
+export ledger cultureRating4: Counter;
+export ledger cultureRating5: Counter;
+
+// Compensation ratings
+export ledger compRating1: Counter;
+export ledger compRating2: Counter;
+export ledger compRating3: Counter;
+export ledger compRating4: Counter;
+export ledger compRating5: Counter;
+
+// Management ratings
+export ledger mgmtRating1: Counter;
+export ledger mgmtRating2: Counter;
+export ledger mgmtRating3: Counter;
+export ledger mgmtRating4: Counter;
+export ledger mgmtRating5: Counter;
+
+// Work-Life Balance ratings
+export ledger wlbRating1: Counter;
+export ledger wlbRating2: Counter;
+export ledger wlbRating3: Counter;
+export ledger wlbRating4: Counter;
+export ledger wlbRating5: Counter;
+
+// Career Growth ratings
+export ledger growthRating1: Counter;
+export ledger growthRating2: Counter;
+export ledger growthRating3: Counter;
+export ledger growthRating4: Counter;
+export ledger growthRating5: Counter;
+
+// Total reviews counter
+export ledger totalReviews: Counter;
+export ledger currentReviewPeriod: Counter;
+export ledger round: Counter;
+
+// ============================================================
+// WITNESSES (Private data)
+// ============================================================
+
+witness adminSecretKey(): Bytes<32>;
+witness employeeSecretKey(): Bytes<32>;
+witness reviewPeriod(): Field;
+witness reviewTokenRandomness(): Bytes<32>;
+
+// Review content witnesses
+witness cultureScore(): Field;
+witness compensationScore(): Field;
+witness managementScore(): Field;
+witness workLifeBalanceScore(): Field;
+witness careerGrowthScore(): Field;
+witness reviewContentHash(): Bytes<32>;
+
+// Merkle path for proving review token ownership
+witness findReviewTokenPath(token: Bytes<32>): MerkleTreePath<20, Bytes<32>>;
+
+// ============================================================
+// INTERNAL CIRCUITS
+// ============================================================
+
+circuit adminPublicKey(r: Field, sk: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>(
+    [pad(32, "echo:review:admin"), r as Bytes<32>, sk]
+  );
+}
+
+// Reconstruct the review token (must match what salary contract created)
+circuit reviewTokenCommitment(sk: Bytes<32>, period: Field, rand: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<4, Bytes<32>>>(
+    [pad(32, "echo:salary:review"), sk, period as Bytes<32>, rand]
+  );
+}
+
+// Review nullifier -- unique per employee per period
+// Prevents submitting multiple reviews in the same period
+circuit reviewNullifier(sk: Bytes<32>, period: Field): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>(
+    [pad(32, "echo:review:nul"), sk, period as Bytes<32>]
+  );
+}
+
+// Create a review authorship commitment
+// Links review content to a verified employee without revealing identity
+circuit reviewAuthorshipCommitment(
+  sk: Bytes<32>,
+  contentHash: Bytes<32>,
+  period: Field
+): Bytes<32> {
+  return persistentHash<Vector<4, Bytes<32>>>(
+    [pad(32, "echo:review:author"), sk, contentHash, period as Bytes<32>]
+  );
+}
+
+// Validate a score is within 1-5 range using field arithmetic
+// Product is 0 iff score is in {1, 2, 3, 4, 5}
+circuit validateScore(score: Field): [] {
+  assert(
+    (score - (1 as Field)) * (score - (2 as Field)) * (score - (3 as Field)) * (score - (4 as Field)) * (score - (5 as Field)) == (0 as Field),
+    "Score must be between 1 and 5"
+  );
+}
+
+// ============================================================
+// EXPORTED CIRCUITS (Entry points)
+// ============================================================
+
+// Initialize the review contract for an organization
+constructor(sk: Bytes<32>) {
+  orgAdmin = disclose(adminPublicKey(round, sk));
+}
+
+// --- Admin Operations ---
+
+// Sync a review token from the salary contract
+// In a production system, this would be a cross-contract call
+// For now, the admin bridges tokens between contracts
+export circuit syncReviewToken(tokenCommitment: Bytes<32>): [] {
+  const sk = adminSecretKey();
+  const pk = adminPublicKey(round, sk);
+  assert(orgAdmin == pk, "Not authorized: admin only");
+
+  verifiedEmployeeTokens.insert(disclose(tokenCommitment));
+}
+
+// Advance to a new review period
+export circuit advanceReviewPeriod(): [] {
+  const sk = adminSecretKey();
+  const pk = adminPublicKey(round, sk);
+  assert(orgAdmin == pk, "Not authorized: admin only");
+
+  currentReviewPeriod.increment(1);
+  round.increment(1);
+}
+
+// --- Employee Operations ---
+
+// Submit an anonymous review
+// The employee proves they have a valid review token (i.e., they're a verified employee)
+// without revealing which employee they are
+export circuit submitReview(
+  contentHashPublic: Bytes<32>,
+  cultureRating: Field,
+  compRating: Field,
+  mgmtRating: Field,
+  wlbRating: Field,
+  growthRating: Field
+): [] {
+  // Validate all scores are in range 1-5
+  validateScore(disclose(cultureRating));
+  validateScore(disclose(compRating));
+  validateScore(disclose(mgmtRating));
+  validateScore(disclose(wlbRating));
+  validateScore(disclose(growthRating));
+
+  // Get private data
+  const sk = employeeSecretKey();
+  const period = reviewPeriod();
+  const tokenRand = reviewTokenRandomness();
+
+  // Reconstruct the review token from private data
+  const token = reviewTokenCommitment(sk, period, tokenRand);
+
+  // Prove the token exists in the verified employee tree
+  const tokenPath = findReviewTokenPath(token);
+  assert(
+    verifiedEmployeeTokens.checkRoot(disclose(merkleTreePathRoot<20, Bytes<32>>(tokenPath))),
+    "Not a verified employee -- no valid review token"
+  );
+
+  // Prevent double-reviewing in this period
+  const nul = reviewNullifier(sk, period);
+  assert(!reviewNullifiers.member(disclose(nul)), "Already reviewed in this period");
+  reviewNullifiers.insert(disclose(nul));
+
+  // Store the review content hash and authorship commitment
+  const authorCommitment = reviewAuthorshipCommitment(sk, disclose(contentHashPublic), period);
+  reviewHashes.insert(disclose(contentHashPublic));
+
+  // Rating bounds already validated by validateScore above
+
+  // Increment total reviews
+  totalReviews.increment(1);
+}
+
+// --- Query Operations ---
+
+export circuit getTotalReviews(): Field {
+  return disclose(totalReviews as Field);
+}
+
+export circuit getCurrentReviewPeriod(): Field {
+  return disclose(currentReviewPeriod as Field);
+}
