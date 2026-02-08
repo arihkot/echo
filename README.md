@@ -34,6 +34,27 @@ Echo consists of three Compact smart contracts, a TypeScript DApp layer, and a N
 
 ---
 
+## Deployment details (contract)
+[4/5] Deploying Contracts
+----------------------------------------
+  [1/3] Deploying organization contract...
+        Address: a6bbbe6b29c809686f31512bfdec579672727d84909a1e40a423827c043c0063
+  [2/3] Deploying salary contract...
+        Address: d9f77776ebfdb541ad65fb84193632ed34955df89bd5661195e25d8fe773ec37
+  [3/3] Deploying review contract...
+        Address: c4443230ef95961056c3daa2870ecf3d66eb0b8182798435c8724b962fe84666
+
+[5/5] Saving Deployment Info
+----------------------------------------
+  Saved to deployment.json
+
+============================================================
+  Deployment complete!
+
+  Organization: a6bbbe6b29c809686f31512bfdec579672727d84909a1e40a423827c043c0063
+  Salary:       d9f77776ebfdb541ad65fb84193632ed34955df89bd5661195e25d8fe773ec37
+  Review:       c4443230ef95961056c3daa2870ecf3d66eb0b8182798435c8724b962fe84666
+
 ## Architecture
 
 ```
